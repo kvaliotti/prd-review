@@ -43,6 +43,11 @@ export enum PageType {
   analytics = "analytics",
 }
 
+export enum RetrieverType {
+  NAIVE = "naive",
+  CONTEXTUAL_COMPRESSION = "contextual_compression",
+}
+
 export interface NotionSettings {
   id: number;
   user_id: number;
@@ -53,6 +58,7 @@ export interface NotionSettings {
   import_prd: boolean;
   import_research: boolean;
   import_analytics: boolean;
+  retriever_type: RetrieverType;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +71,7 @@ export interface NotionSettingsUpdate {
   import_prd?: boolean;
   import_research?: boolean;
   import_analytics?: boolean;
+  retriever_type?: RetrieverType;
 }
 
 export interface NotionPage {

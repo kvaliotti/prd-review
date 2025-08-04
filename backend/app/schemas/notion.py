@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 from app.models import PageType
+from app.core.config import RetrieverType
 
 
 class NotionSettingsBase(BaseModel):
@@ -12,6 +13,7 @@ class NotionSettingsBase(BaseModel):
     import_prd: Optional[bool] = None
     import_research: Optional[bool] = None
     import_analytics: Optional[bool] = None
+    retriever_type: Optional[RetrieverType] = None
 
 
 class NotionSettingsCreate(NotionSettingsBase):
@@ -28,6 +30,7 @@ class NotionSettings(NotionSettingsBase):
     import_prd: bool
     import_research: bool
     import_analytics: bool
+    retriever_type: RetrieverType
     created_at: datetime
     updated_at: datetime
 

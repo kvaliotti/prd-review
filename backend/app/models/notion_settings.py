@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Bool
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database.connection import Base
+from app.core.config import RetrieverType
 
 
 class NotionSettings(Base):
@@ -18,6 +19,9 @@ class NotionSettings(Base):
     import_prd = Column(Boolean, default=True)
     import_research = Column(Boolean, default=True)
     import_analytics = Column(Boolean, default=True)
+    
+    # Retrieval configuration
+    retriever_type = Column(String(50), nullable=False, default=RetrieverType.NAIVE.value)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

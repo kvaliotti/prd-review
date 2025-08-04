@@ -67,6 +67,7 @@ async def get_notion_settings(
             "import_prd": settings.import_prd,
             "import_research": settings.import_research,
             "import_analytics": settings.import_analytics,
+            "retriever_type": settings.retriever_type,
             "created_at": settings.created_at,
             "updated_at": settings.updated_at
         }
@@ -101,7 +102,8 @@ async def update_notion_settings(
             analytics_database_id=settings_update.analytics_database_id,
             import_prd=settings_update.import_prd,
             import_research=settings_update.import_research,
-            import_analytics=settings_update.import_analytics
+            import_analytics=settings_update.import_analytics,
+            retriever_type=settings_update.retriever_type
         )
         
         # Don't expose the actual token in the response
@@ -115,6 +117,7 @@ async def update_notion_settings(
             "import_prd": settings.import_prd,
             "import_research": settings.import_research,
             "import_analytics": settings.import_analytics,
+            "retriever_type": settings.retriever_type,
             "created_at": settings.created_at,
             "updated_at": settings.updated_at
         }

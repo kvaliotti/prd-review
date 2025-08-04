@@ -10,6 +10,11 @@ class Environment(str, Enum):
     PRODUCTION = "production"
 
 
+class RetrieverType(str, Enum):
+    NAIVE = "naive"
+    CONTEXTUAL_COMPRESSION = "contextual_compression"
+
+
 class Settings(BaseSettings):
     # Environment
     environment: Environment = Environment.DEVELOPMENT
@@ -24,7 +29,7 @@ class Settings(BaseSettings):
     # Security
     secret_key: str
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 15
+    access_token_expire_minutes: int = 480  # 8 hours instead of 15 minutes
     refresh_token_expire_days: int = 7
     password_min_length: int = 6
     
@@ -38,6 +43,10 @@ class Settings(BaseSettings):
     # LLM API Keys for LangGraph
     anthropic_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
+    cohere_api_key: Optional[str] = None
+    
+    # Retrieval Configuration
+    retriever_type: RetrieverType = RetrieverType.NAIVE
     
     # LangSmith tracing configuration
     langsmith_tracing: Optional[str] = None
@@ -136,7 +145,15 @@ class Settings(BaseSettings):
         return {
             "anthropic_api_key": self.anthropic_api_key,
             "tavily_api_key": self.tavily_api_key,
+            "cohere_api_key": self.cohere_api_key,
             "openai_api_key": self.openai_api_key,
+        }
+    
+    def get_retrieval_config(self) -> dict:
+        """Get retrieval configuration"""
+        return {
+            "retriever_type": self.retriever_type,
+            "cohere_api_key": self.cohere_api_key,
         }
 
 

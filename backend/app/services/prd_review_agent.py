@@ -20,8 +20,15 @@ from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langgraph.types import Command
 
+# Tavily web search imports
+from tavily import TavilyClient, AsyncTavilyClient
+
+# Contextual compression retriever imports
+from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_cohere import CohereRerank
+
 from app.database.connection import get_db
-from app.core.config import settings
+from app.core.config import settings, RetrieverType
 
 
 class Query(BaseModel):
@@ -30,6 +37,21 @@ class Query(BaseModel):
 
 class Queries(BaseModel):
     queries: List[Query] = Field(description="List of queries for RAG retrieval")
+
+
+class WebQuery(BaseModel):
+    search_query: str = Field(description="Query for web search to get market insights and validation")
+
+
+class WebQueries(BaseModel):
+    queries: List[WebQuery] = Field(description="List of queries for web search")
+
+
+class MarketSuggestionsSection(BaseModel):
+    """Structured output for feature and design suggestions based on web search."""
+    feature_ideas: List[str] = Field(description="List of specific feature ideas and functionality suggestions based on web research (4-6 bullet points with source citations)")
+    ux_ui_suggestions: List[str] = Field(description="List of UX/UI patterns, design ideas, and behavioral solutions from similar products (4-6 bullet points with source citations)")
+    sources: List[str] = Field(description="List of web sources used in this analysis", default_factory=list)
 
 
 class AnalysisSection(BaseModel):
@@ -69,12 +91,27 @@ class SectionOutputState(TypedDict):
     retrieval_logs: List[str]
 
 
+class MarketSuggestionsState(TypedDict):
+    prd_content: str
+    prd_title: str
+    sections: List[Section]
+    completed_sections: Annotated[List[Section], operator.add]
+    retrieval_logs: Annotated[List[str], operator.add]
+    web_search_logs: Annotated[List[str], operator.add]
+    market_suggestions: Optional[dict]
+    final_report: str
+    web_queries: List[WebQuery]
+    web_search_results: str
+
+
 class ReportState(TypedDict):
     prd_content: str
     prd_title: str
     sections: List[Section]
     completed_sections: Annotated[List[Section], operator.add]
     retrieval_logs: Annotated[List[str], operator.add]
+    web_search_logs: Annotated[List[str], operator.add]
+    market_suggestions: Optional[dict]
     final_report: str
 
 
@@ -94,6 +131,7 @@ class Configuration(BaseModel):
     writer_model: str = Field(default="gpt-4.1", description="OpenAI model for analysis")
     top_k: int = Field(default=5, description="Number of documents to retrieve from RAG")
     number_of_queries: int = Field(default=2, description="Number of RAG queries per section")
+    retriever_type: RetrieverType = Field(default=RetrieverType.NAIVE, description="Type of retriever to use")
 
     @classmethod
     def from_runnable_config(cls, config: RunnableConfig) -> "Configuration":
@@ -101,8 +139,8 @@ class Configuration(BaseModel):
         return cls(**configurable)
 
 
-def create_notion_retriever(db: Session, top_k: int = 5) -> BaseRetriever:
-    """Create a native LangChain PGVector retriever for research and analytics documents."""
+def create_notion_retriever(db: Session, top_k: int = 5, retriever_type: RetrieverType = RetrieverType.NAIVE) -> BaseRetriever:
+    """Create a LangChain PGVector retriever for research and analytics documents with optional contextual compression."""
     
     # Use the original database URL from settings (which has correct credentials)
     db_url = settings.database_url
@@ -116,31 +154,75 @@ def create_notion_retriever(db: Session, top_k: int = 5) -> BaseRetriever:
     embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
     
     try:
-        # Create vector store - let LangChain manage its own tables
-        vectorstore = PGVector(
-            embeddings=embeddings,
-            connection=connection_string,
-            collection_name="prd_research_docs",  # Unique collection for our research docs
-            use_jsonb=True,
-            pre_delete_collection=False,  # Don't delete existing collection
-        )
+        try:
+            print(f"🔗 Connecting to PGVector store...")
+            
+            # Create vector store - if tables exist, that's fine
+            vectorstore = PGVector(
+                embeddings=embeddings,
+                connection=connection_string,
+                collection_name="prd_research_docs",  # Unique collection for our research docs
+                use_jsonb=True,
+                pre_delete_collection=False,  # Don't delete existing collection
+            )
+            print(f"✅ Connected to PGVector store successfully")
+            
+        except Exception as e:
+            # Handle the specific case where LangChain tables/types already exist
+            error_str = str(e)
+            if "duplicate key" in error_str and "langchain_pg_collection" in error_str:
+                print(f"⚠️ LangChain tables already exist - using fallback retriever approach...")
+                # Skip to fallback mechanism
+                raise e
+            else:
+                print(f"❌ Unexpected PGVector error: {e}")
+                raise e
         
         # Check if we need to populate the LangChain vector store
         _populate_langchain_vectorstore(db, vectorstore)
         
-        # Create retriever with filtering for research and analytics only
-        # Using correct LangChain PGVector filter syntax  
-        retriever = vectorstore.as_retriever(
+        # Create base retriever - filter not needed since vectorstore only contains research/analytics docs
+        base_retriever = vectorstore.as_retriever(
             search_type="similarity",
-            search_kwargs={
-                "k": top_k,
-                "filter": {"page_type": {"$in": ["research", "analytics"]}}
-            }
+            search_kwargs={"k": top_k}
         )
         
-        print(f"🔧 Created native PGVector retriever with filter for research/analytics chunks")
-        return retriever
+        # Apply contextual compression if requested
+        print(f"🔍 Checking retriever type: {retriever_type}")
+        print(f"🔍 Is CONTEXTUAL_COMPRESSION? {retriever_type == RetrieverType.CONTEXTUAL_COMPRESSION}")
         
+        if retriever_type == RetrieverType.CONTEXTUAL_COMPRESSION:
+            print(f"🔑 Cohere API key available: {settings.cohere_api_key is not None}")
+            if settings.cohere_api_key:
+                try:
+                    print(f"🔧 Creating Cohere compressor...")
+                    compressor = CohereRerank(
+                        model="rerank-v3.5",
+                        cohere_api_key=settings.cohere_api_key
+                    )
+                    print(f"✅ Cohere compressor created successfully")
+                    
+                    print(f"🔧 Creating contextual compression retriever...")
+                    retriever = ContextualCompressionRetriever(
+                        base_compressor=compressor,
+                        base_retriever=base_retriever
+                    )
+                    print(f"✅ Contextual compression retriever created successfully")
+                    print(f"🔧 Created contextual compression retriever with Cohere rerank for research/analytics chunks")
+                    return retriever
+                except Exception as e:
+                    print(f"⚠️ Failed to create contextual compression retriever: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    print(f"🔧 Falling back to naive retriever")
+                    return base_retriever
+            else:
+                print(f"⚠️ Cohere API key not configured, falling back to naive retriever")
+                return base_retriever
+        else:
+            print(f"🔧 Created naive PGVector retriever for research/analytics chunks")
+            return base_retriever
+            
     except Exception as e:
         print(f"❌ Error creating PGVector retriever: {e}")
         # Fallback to basic similarity search without filters
@@ -151,10 +233,27 @@ def create_notion_retriever(db: Session, top_k: int = 5) -> BaseRetriever:
             use_jsonb=True,
         )
         
-        return vectorstore.as_retriever(
+        fallback_retriever = vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs={"k": top_k}
         )
+        
+        # Apply contextual compression to fallback if requested
+        if retriever_type == RetrieverType.CONTEXTUAL_COMPRESSION and settings.cohere_api_key:
+            try:
+                compressor = CohereRerank(
+                    model="rerank-v3.5",
+                    cohere_api_key=settings.cohere_api_key
+                )
+                return ContextualCompressionRetriever(
+                    base_compressor=compressor,
+                    base_retriever=fallback_retriever
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to create contextual compression for fallback: {e}")
+                return fallback_retriever
+        
+        return fallback_retriever
 
 
 def _populate_langchain_vectorstore(db: Session, vectorstore: PGVector):
@@ -214,6 +313,101 @@ def _populate_langchain_vectorstore(db: Session, vectorstore: PGVector):
             print(f"❌ Error adding batch {i//batch_size + 1}: {e}")
     
     print(f"🎯 Successfully populated LangChain vectorstore with {len(documents)} documents")
+
+
+def deduplicate_and_format_sources(search_response, max_tokens_per_source=500, include_raw_content=True):
+    """
+    Takes a list of search responses and formats them into a readable string.
+    Limits the raw_content to approximately max_tokens_per_source.
+ 
+    Args:
+        search_response: List of search response dicts, each containing:
+            - query: str
+            - results: List of dicts with fields:
+                - title: str
+                - url: str
+                - content: str
+                - score: float
+                - raw_content: str|None
+        max_tokens_per_source: int
+        include_raw_content: bool
+            
+    Returns:
+        str: Formatted string with deduplicated sources
+    """
+    # Collect all results
+    sources_list = []
+    for response in search_response:
+        sources_list.extend(response['results'])
+    
+    # Deduplicate by URL
+    unique_sources = {source['url']: source for source in sources_list}
+
+    # Format output
+    formatted_text = "Web Sources:\n\n"
+    for i, source in enumerate(unique_sources.values(), 1):
+        formatted_text += f"Source {source['title']}:\n===\n"
+        formatted_text += f"URL: {source['url']}\n===\n"
+        formatted_text += f"Most relevant content from source: {source['content']}\n===\n"
+        if include_raw_content:
+            # Using rough estimate of 4 characters per token
+            char_limit = max_tokens_per_source * 4
+            # Handle None raw_content
+            raw_content = source.get('raw_content', '')
+            if raw_content is None:
+                raw_content = ''
+                print(f"Warning: No raw_content found for source {source['url']}")
+            if len(raw_content) > char_limit:
+                raw_content = raw_content[:char_limit] + "... [truncated]"
+            formatted_text += f"Full source content limited to {max_tokens_per_source} tokens: {raw_content}\n\n"
+                
+    return formatted_text.strip()
+
+
+async def tavily_search_async(search_queries):
+    """
+    Performs concurrent web searches using the Tavily API.
+
+    Args:
+        search_queries (List[WebQuery]): List of search queries to process
+
+    Returns:
+        List[dict]: List of search responses from Tavily API, one per query. Each response has format:
+            {
+                'query': str, # The original search query
+                'follow_up_questions': None,      
+                'answer': None,
+                'images': list,
+                'results': [                     # List of search results
+                    {
+                        'title': str,            # Title of the webpage
+                        'url': str,              # URL of the result
+                        'content': str,          # Summary/snippet of content
+                        'score': float,          # Relevance score
+                        'raw_content': str|None  # Full page content if available
+                    },
+                    ...
+                ]
+            }
+    """
+    # Initialize async Tavily client
+    tavily_async_client = AsyncTavilyClient(api_key=settings.tavily_api_key)
+    
+    search_tasks = []
+    for query in search_queries:
+        search_tasks.append(
+            tavily_async_client.search(
+                query.search_query,
+                max_results=5,
+                include_raw_content=True,
+                topic="general"
+            )
+        )
+
+    # Execute all searches concurrently
+    search_docs = await asyncio.gather(*search_tasks)
+
+    return search_docs
 
 
 # Section-specific analysis instructions
@@ -367,7 +561,14 @@ def generate_report_plan(state: ReportState):
         )
     ]
     
-    return {"sections": sections, "completed_sections": [], "retrieval_logs": []}
+    return {
+        "sections": sections, 
+        "completed_sections": [], 
+        "retrieval_logs": [], 
+        "web_search_logs": [], 
+        "market_suggestions": None,
+        "final_report": ""
+    }
 
 
 def generate_queries(state: SectionState, config: RunnableConfig):
@@ -446,8 +647,8 @@ def do_rag_retrieval(state: SectionState, config: RunnableConfig):
         # Fallback to getting db session
         db = next(get_db())
     
-    # Create native LangChain retriever
-    retriever = create_notion_retriever(db, top_k=configurable.top_k)
+    # Create LangChain retriever (naive or contextual compression based on config)
+    retriever = create_notion_retriever(db, top_k=configurable.top_k, retriever_type=configurable.retriever_type)
     
     # Retrieve documents for all queries
     all_docs = []
@@ -600,6 +801,210 @@ async def write_section(state: SectionState, config: RunnableConfig) -> Command[
     )
 
 
+def generate_web_queries(state: MarketSuggestionsState, config: RunnableConfig):
+    """Generate web search queries for market suggestions based on PRD content and completed analysis."""
+    
+    prd_content = state["prd_content"]
+    completed_sections = state["completed_sections"]
+    
+    configurable = Configuration.from_runnable_config(config)
+    
+    # Create context from completed sections
+    section_context = ""
+    for section in completed_sections:
+        if section.analysis:
+            section_context += f"\n{section.name}: {section.analysis[:200]}..."
+    
+    # Create web query generation prompt
+    query_prompt = f"""
+    You are generating web search queries to find specific feature ideas, UX patterns, and design solutions that could improve a PRD's solution.
+    
+    PRD Content: {prd_content[:1000]}...
+    
+    Completed Analysis Context: {section_context}
+    
+    Generate exactly 3 web search queries to find:
+    1. Specific feature ideas and functionality from similar products or apps that address this problem/audience
+    2. UX/UI patterns, interface designs, and user experience solutions from relevant products
+    3. Behavioral design techniques, interaction patterns, and usability improvements from successful apps
+    
+    These queries should help find tangible, actionable ideas that the product team can implement.
+    Focus on finding:
+    - Specific features that similar products use
+    - UI/UX patterns that work well for this type of user/problem
+    - Interaction design and behavioral nudges
+    - Accessibility and usability best practices
+    - Navigation patterns and information architecture
+    - Onboarding flows and user engagement techniques
+    
+    Make queries specific to find concrete solutions, not general market analysis.
+    
+    Example good queries:
+    - "[target audience] app features [specific problem] UX design"
+    - "[similar app category] user interface patterns dashboard design"
+    - "[behavioral goal] app design user engagement features"
+    - "[specific functionality] UI patterns mobile web design"
+    """
+    
+    # Initialize model
+    writer_model = ChatOpenAI(
+        model=configurable.writer_model,
+        api_key=settings.openai_api_key
+    )
+    structured_llm = writer_model.with_structured_output(WebQueries)
+    
+    # Generate queries
+    queries = structured_llm.invoke([
+        SystemMessage(content=query_prompt),
+        HumanMessage(content="Generate 3 web search queries for finding specific feature ideas, UX patterns, and design solutions.")
+    ])
+    
+    return {"web_queries": queries.queries}
+
+
+async def do_web_search(state: MarketSuggestionsState, config: RunnableConfig):
+    """Perform web search using Tavily for market insights."""
+    
+    web_queries = state["web_queries"]
+    web_search_logs = []
+    
+    log_msg = f"🌐 Starting web search for feature ideas and design solutions with {len(web_queries)} queries"
+    print(log_msg)
+    web_search_logs.append(log_msg)
+    
+    try:
+        # Perform concurrent web searches
+        search_results = await tavily_search_async(web_queries)
+        
+        total_results = sum(len(result.get('results', [])) for result in search_results)
+        log_msg = f"🌐 Retrieved {total_results} web results across {len(search_results)} queries"
+        print(log_msg)
+        web_search_logs.append(log_msg)
+        
+        # Log individual query results
+        for i, (query, result) in enumerate(zip(web_queries, search_results)):
+            num_results = len(result.get('results', []))
+            log_msg = f"🔍 Query {i+1}: '{query.search_query}' → {num_results} results"
+            print(log_msg)
+            web_search_logs.append(log_msg)
+        
+        # Format search results
+        formatted_results = deduplicate_and_format_sources(search_results, max_tokens_per_source=500)
+        
+        log_msg = f"✅ Web search completed successfully"
+        print(log_msg)
+        web_search_logs.append(log_msg)
+        
+        return {
+            "web_search_results": formatted_results,
+            "web_search_logs": web_search_logs
+        }
+        
+    except Exception as e:
+        log_msg = f"❌ Error during web search: {e}"
+        print(log_msg)
+        web_search_logs.append(log_msg)
+        
+        return {
+            "web_search_results": "No web search results available due to error.",
+            "web_search_logs": web_search_logs
+        }
+
+
+async def write_market_suggestions(state: MarketSuggestionsState, config: RunnableConfig) -> Command[Literal[END]]:
+    """Write feature and design suggestions section based on web search results."""
+    
+    prd_content = state["prd_content"]
+    web_search_results = state["web_search_results"]
+    web_search_logs = state.get("web_search_logs", [])
+    completed_sections = state["completed_sections"]
+    
+    configurable = Configuration.from_runnable_config(config)
+    
+    # Create context from completed sections
+    section_context = ""
+    for section in completed_sections:
+        if section.analysis:
+            section_context += f"\n\n**{section.name} Analysis:**\n{section.analysis[:300]}..."
+    
+    # Market suggestions prompt
+    system_instructions = f"""You are an expert in product design, UX/UI, and feature development.
+    
+    Based on the PRD content and web search results, provide specific feature ideas and design solutions that could improve the product.
+
+    <PRD Content>
+    {prd_content}
+    </PRD Content>
+
+    <Completed Analysis Context>
+    {section_context}
+    </Completed Analysis Context>
+
+    <Web Search Results>
+    {web_search_results}
+    </Web Search Results>
+
+    Provide actionable suggestions structured as:
+
+    1. **Feature ideas** (4-6 bullet points):
+       - Specific functionality and features found in similar products that could address the problem
+       - Include source citations when based on web research using format [Source: Source Name]
+       - Focus on concrete, implementable features
+    
+    2. **UX/UI suggestions** (4-6 bullet points):
+       - Interface patterns, design approaches, and user experience solutions from successful products
+       - Behavioral design techniques and interaction patterns
+       - Include source citations when based on web research using format [Source: Source Name]
+       - Focus on actionable design recommendations
+
+    CRITICAL FORMATTING:
+    - Always cite web sources when referencing external examples
+    - Focus on tangible, implementable ideas
+    - Connect suggestions directly to the PRD's audience and problem
+    - Prioritize solutions that are practical and achievable
+
+    Your suggestions should help the product team enhance their solution with proven patterns and innovative features from the broader ecosystem."""
+
+    # Initialize model with structured output
+    writer_model = ChatOpenAI(
+        model=configurable.writer_model,
+        api_key=settings.openai_api_key
+    )
+    structured_llm = writer_model.with_structured_output(MarketSuggestionsSection)
+    
+    # Generate structured market suggestions
+    result = structured_llm.invoke([
+        SystemMessage(content=system_instructions),
+        HumanMessage(content="Analyze similar products and provide structured feature ideas and UX/UI suggestions for this PRD.")
+    ])
+    
+    # Extract sources from web search results for tracking
+    sources_used = []
+    if web_search_results and "Web Sources:" in web_search_results:
+        # Extract source titles from formatted results
+        lines = web_search_results.split('\n')
+        for line in lines:
+            if line.startswith('Source ') and ':' in line:
+                source_title = line.split(':', 1)[1].strip()
+                if source_title and source_title not in sources_used:
+                    sources_used.append(source_title)
+    
+    # Create feature suggestions dict for final report
+    market_suggestions = {
+        "feature_ideas": result.feature_ideas,
+        "ux_ui_suggestions": result.ux_ui_suggestions,
+        "sources": sources_used
+    }
+    
+    return Command(
+        update={
+            "market_suggestions": market_suggestions,
+            "web_search_logs": web_search_logs
+        },
+        goto=END
+    )
+
+
 def initiate_section_analysis(state: ReportState):
     """Initiate parallel section analysis for ALL sections (force RAG for all)."""
     
@@ -618,10 +1023,14 @@ def initiate_section_analysis(state: ReportState):
     ]
 
 
+
+
+
 def compile_final_report(state: ReportState):
-    """Compile the final analysis report with proper markdown formatting and sources."""
+    """Compile the final analysis report with proper markdown formatting, sources, and market suggestions."""
     
     completed_sections = {s.name: s for s in state["completed_sections"]}
+    market_suggestions = state.get("market_suggestions")
     all_sources = set()  # Collect all unique sources
     
     # Update sections with completed content
@@ -686,6 +1095,36 @@ def compile_final_report(state: ReportState):
                 report_parts.append(f"- {source}")
             report_parts.append("")  # Empty line
     
+    # Add Market Suggestions section at the end
+    if market_suggestions:
+        report_parts.append("---\n")
+        report_parts.append("## Feature & Design Ideas\n")
+        
+        # Feature ideas
+        report_parts.append("### Feature ideas:\n")
+        if market_suggestions.get("feature_ideas"):
+            for idea in market_suggestions["feature_ideas"]:
+                report_parts.append(f"- {idea}")
+            report_parts.append("")  # Empty line
+        else:
+            report_parts.append("No feature ideas identified.\n")
+        
+        # UX/UI suggestions
+        report_parts.append("### UX/UI suggestions:\n")
+        if market_suggestions.get("ux_ui_suggestions"):
+            for suggestion in market_suggestions["ux_ui_suggestions"]:
+                report_parts.append(f"- {suggestion}")
+            report_parts.append("")  # Empty line
+        else:
+            report_parts.append("No UX/UI suggestions identified.\n")
+        
+        # Web sources section
+        if market_suggestions.get("sources"):
+            report_parts.append("### Web Sources Referenced\n")
+            for source in market_suggestions["sources"]:
+                report_parts.append(f"- {source}")
+            report_parts.append("")  # Empty line
+    
     # Add overall sources section at the end
     if all_sources:
         report_parts.append("---\n")
@@ -711,26 +1150,60 @@ section_builder.add_edge(START, "generate_queries")
 section_builder.add_edge("generate_queries", "do_rag_retrieval")
 section_builder.add_edge("do_rag_retrieval", "write_section")
 
+# Build the market suggestions subgraph
+market_suggestions_builder = StateGraph(MarketSuggestionsState)
+market_suggestions_builder.add_node("generate_web_queries", generate_web_queries)
+market_suggestions_builder.add_node("do_web_search", do_web_search)
+market_suggestions_builder.add_node("write_market_suggestions", write_market_suggestions)
+
+# Add edges for market suggestions subgraph
+market_suggestions_builder.add_edge(START, "generate_web_queries")
+market_suggestions_builder.add_edge("generate_web_queries", "do_web_search")
+market_suggestions_builder.add_edge("do_web_search", "write_market_suggestions")
+
 # Build the main graph
 builder = StateGraph(ReportState, input=ReportStateInput, output=ReportStateOutput, config_schema=Configuration)
 builder.add_node("generate_report_plan", generate_report_plan)
 builder.add_node("analyze_section", section_builder.compile())
+builder.add_node("find_market_suggestions", market_suggestions_builder.compile())  # Now generates feature & design ideas
 builder.add_node("compile_final_report", compile_final_report)
 
-# Add edges for main graph
+# Add edges for main graph - UPDATED PIPELINE: 
+# generate_report_plan -> analyze_section -> find_market_suggestions (feature & design ideas) -> compile_final_report
 builder.add_edge(START, "generate_report_plan")
 builder.add_conditional_edges("generate_report_plan", initiate_section_analysis, ["analyze_section"])
-builder.add_edge("analyze_section", "compile_final_report")
+builder.add_edge("analyze_section", "find_market_suggestions")
+builder.add_edge("find_market_suggestions", "compile_final_report")
 builder.add_edge("compile_final_report", END)
 
 # Compile the final graph
 prd_analysis_graph = builder.compile()
 
 # Async wrapper for streaming
-async def analyze_prd_with_streaming(prd_content: str, prd_title: str = "PRD", db: Session = None):
-    """Analyze PRD with streaming support using native LangChain retrievers."""
+async def analyze_prd_with_streaming(prd_content: str, prd_title: str = "PRD", db: Session = None, current_user = None):
+    """Analyze PRD with streaming support using LangChain retrievers (naive or contextual compression) and Tavily web search."""
     
-    config = {"configurable": {"top_k": 5, "db": db}}
+    # Get user's retriever type from their notion settings, fallback to global default
+    user_retriever_type = settings.retriever_type  # Default fallback
+    
+    if current_user and db:
+        try:
+            from app.crud.notion import get_user_notion_settings
+            user_settings = get_user_notion_settings(db, current_user.id)
+            if user_settings and user_settings.retriever_type:
+                # Convert string to enum
+                user_retriever_type = RetrieverType(user_settings.retriever_type)
+                print(f"🔧 Using user's retriever type: {user_retriever_type.value}")
+        except Exception as e:
+            print(f"⚠️ Failed to get user's retriever type, using default: {e}")
+    
+    config = {
+        "configurable": {
+            "top_k": 5, 
+            "db": db,
+            "retriever_type": user_retriever_type  # Use user's specific setting
+        }
+    }
     
     async for chunk in prd_analysis_graph.astream(
         {"prd_content": prd_content, "prd_title": prd_title},

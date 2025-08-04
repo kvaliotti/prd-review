@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { notionAPI } from '../services/api';
-import { NotionSettingsUpdate } from '../types';
+import { NotionSettingsUpdate, RetrieverType } from '../types';
 import './SettingsPage.css';
 
 const SettingsPage: React.FC = () => {
@@ -23,6 +23,7 @@ const SettingsPage: React.FC = () => {
             import_prd: response.data.import_prd || false,
             import_research: response.data.import_research || false,
             import_analytics: response.data.import_analytics || false,
+            retriever_type: response.data.retriever_type || RetrieverType.NAIVE,
           });
         }
       } catch (error) {
@@ -38,6 +39,11 @@ const SettingsPage: React.FC = () => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
     setSettings(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
+  };
+
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setSettings(prev => ({ ...prev, [name]: value }));
   };
 
   const handleTestConnection = async () => {
@@ -67,7 +73,15 @@ const SettingsPage: React.FC = () => {
     setIsSaving(true);
     setMessage(null);
     try {
-      await notionAPI.updateSettings(settings);
+      // Filter out masked notion_token to avoid validation errors
+      const settingsToSave = { ...settings };
+      
+      // Don't send the notion_token if it's the masked value "***"
+      if (settingsToSave.notion_token === '***' || settingsToSave.notion_token === '') {
+        delete settingsToSave.notion_token;
+      }
+      
+      await notionAPI.updateSettings(settingsToSave);
       setMessage({ type: 'success', text: 'Settings saved successfully!' });
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -205,6 +219,37 @@ const SettingsPage: React.FC = () => {
               <button className="btn-primary" onClick={handleSaveChanges} disabled={isSaving}>
                 {isSaving ? 'Saving...' : 'Save Configuration'}
               </button>
+            </div>
+          </div>
+
+          <div className="settings-card">
+            <div className="card-header">
+              <span className="card-icon">🔍</span>
+              <div>
+                <h2 className="card-title">Retrieval Configuration</h2>
+                <p className="card-description">Choose how documents are retrieved and ranked for analysis</p>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="retriever_type">Retriever Type</label>
+              <select
+                id="retriever_type"
+                name="retriever_type"
+                value={settings.retriever_type || RetrieverType.NAIVE}
+                onChange={handleSelectChange}
+                className="form-select"
+              >
+                <option value={RetrieverType.NAIVE}>Naive Retriever</option>
+                <option value={RetrieverType.CONTEXTUAL_COMPRESSION}>Contextual Compression (Cohere)</option>
+              </select>
+              <div className="field-description">
+                {settings.retriever_type === RetrieverType.CONTEXTUAL_COMPRESSION ? (
+                  <p>Uses Cohere's rerank-v3.5 model to improve document relevance and compression. Requires COHERE_API_KEY.</p>
+                ) : (
+                  <p>Standard similarity-based document retrieval using embeddings.</p>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -16,7 +16,8 @@ async def stream_prd_analysis(
     prd_content: str, 
     prd_title: str, 
     prd_type: str, 
-    db: Session
+    db: Session,
+    current_user = None  # Add current_user parameter
 ) -> AsyncGenerator[str, None]:
     """Stream PRD analysis events as Server-Sent Events."""
     
@@ -27,7 +28,7 @@ async def stream_prd_analysis(
         sections_completed = 0
         total_sections = 5  # We now have 5 sections
         
-        async for chunk in analyze_prd_with_streaming(prd_content, prd_title, db):
+        async for chunk in analyze_prd_with_streaming(prd_content, prd_title, db, current_user):  # Pass current_user
             # Handle different types of graph updates
             for node_name, data in chunk.items():
                 
@@ -140,7 +141,7 @@ async def analyze_prd_stream(
     
     # Return streaming response
     return StreamingResponse(
-        stream_prd_analysis(prd_content, prd_title, prd_type, db),
+        stream_prd_analysis(prd_content, prd_title, prd_type, db, current_user),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

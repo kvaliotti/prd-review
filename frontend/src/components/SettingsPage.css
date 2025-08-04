@@ -84,7 +84,8 @@
 }
 
 .form-group input[type="text"],
-.form-group input[type="password"] {
+.form-group input[type="password"],
+.form-group .form-select {
   width: 100%;
   padding: 0.75rem;
   border: 2px solid #ecf0f1;
@@ -95,7 +96,8 @@
 }
 
 .form-group input[type="text"]:focus,
-.form-group input[type="password"]:focus {
+.form-group input[type="password"]:focus,
+.form-group .form-select:focus {
   outline: none;
   border-color: #667eea;
   background: white;
@@ -156,6 +158,21 @@
   color: #2c3e50;
   cursor: pointer;
   font-size: 0.9rem;
+}
+
+.field-description {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+  border-left: 3px solid #667eea;
+}
+
+.field-description p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #6c757d;
+  line-height: 1.4;
 }
 
 .button-group {

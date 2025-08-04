@@ -1,6 +1,7 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from app.models import NotionSettings, NotionPage, NotionChunk, NotionComment, PageType
+from app.core.config import RetrieverType
 
 
 def get_user_notion_settings(db: Session, user_id: int) -> Optional[NotionSettings]:
@@ -17,7 +18,8 @@ def create_or_update_notion_settings(
     analytics_database_id: Optional[str] = None,
     import_prd: Optional[bool] = None,
     import_research: Optional[bool] = None,
-    import_analytics: Optional[bool] = None
+    import_analytics: Optional[bool] = None,
+    retriever_type: Optional[RetrieverType] = None
 ) -> NotionSettings:
     """Create or update user's Notion settings"""
     settings = get_user_notion_settings(db, user_id)
@@ -38,6 +40,8 @@ def create_or_update_notion_settings(
             settings.import_research = import_research
         if import_analytics is not None:
             settings.import_analytics = import_analytics
+        if retriever_type is not None:
+            settings.retriever_type = retriever_type.value
     else:
         # Create new settings
         settings = NotionSettings(
@@ -48,7 +52,8 @@ def create_or_update_notion_settings(
             analytics_database_id=analytics_database_id,
             import_prd=import_prd if import_prd is not None else True,
             import_research=import_research if import_research is not None else True,
-            import_analytics=import_analytics if import_analytics is not None else True
+            import_analytics=import_analytics if import_analytics is not None else True,
+            retriever_type=retriever_type.value if retriever_type is not None else RetrieverType.NAIVE.value
         )
         db.add(settings)
     
