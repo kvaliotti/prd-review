@@ -9,6 +9,7 @@ import SettingsPage from './components/SettingsPage';
 import KnowledgeBasePage from './components/KnowledgeBasePage';
 import PRDReviewPage from './components/PRDReviewPage';
 import Navigation from './components/Navigation';
+import RagasEvaluationPage from './components/RagasEvaluationPage';
 
 function App() {
   return (
@@ -33,6 +34,14 @@ function MainApp() {
           {/* Protected routes */}
           <Route 
             path="/" 
+            element={
+              <PrivateRoute>
+                <Navigate to="/chat" replace />
+              </PrivateRoute>
+            } 
+          />
+          <Route 
+            path="/chat" 
             element={
               <PrivateRoute>
                 <ChatInterface />
@@ -60,6 +69,14 @@ function MainApp() {
             element={
               <PrivateRoute>
                 <PRDReviewPage />
+              </PrivateRoute>
+            }
+          />
+          <Route 
+            path="/ragas-evaluation" 
+            element={
+              <PrivateRoute>
+                <RagasEvaluationPage />
               </PrivateRoute>
             }
           />

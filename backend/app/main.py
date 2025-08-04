@@ -51,9 +51,7 @@ from app.core.security import (
 from app.services.llm_agent import EnhancedChatAgent
 
 # Import routers
-from app.routers.notion import router as notion_router
-from app.routers.prd import router as prd_router
-from app.routers.prd_analysis import router as prd_analysis_router
+from app.routers import notion, prd, prd_analysis, ragas_evaluation
 
 # Configure logging
 configure_logging(settings.log_level)
@@ -515,17 +513,22 @@ async def root():
 
 # Include routers with authentication dependency
 app.include_router(
-    notion_router,
+    notion.router,
     dependencies=[Depends(get_current_user)]
 )
 
 app.include_router(
-    prd_router,
+    prd.router,
     dependencies=[Depends(get_current_user)]
 )
 
 app.include_router(
-    prd_analysis_router
+    prd_analysis.router
+    # No global auth dependency - handles EventSource authentication manually per endpoint
+)
+
+app.include_router(
+    ragas_evaluation.router
     # No global auth dependency - handled per endpoint for EventSource compatibility
 )
 

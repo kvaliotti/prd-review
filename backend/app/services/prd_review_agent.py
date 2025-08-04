@@ -73,6 +73,7 @@ class Section(BaseModel):
     supported_points: List[str] = Field(default_factory=list, description="List of clearly supported points, ideas, or thoughts that are well-backed by research evidence.")
     score: int = Field(default=0, description="Score for this section from 0 to 5.")
     sources: List[str] = Field(default_factory=list, description="Sources used for this section analysis.")
+    source_contexts: str = Field(default="", description="Raw source contexts retrieved for this section - used for RAGAS evaluation.")  # ADDED for RAGAS
 
 
 class SectionState(TypedDict):
@@ -795,8 +796,15 @@ async def write_section(state: SectionState, config: RunnableConfig) -> Command[
     section.score = result.score
     section.sources = sources_used
     
+    # CRITICAL: Store source_str in section for RAGAS evaluation access
+    section.source_contexts = source_str  # Add source contexts to section
+    
     return Command(
-        update={"completed_sections": [section], "retrieval_logs": retrieval_logs},
+        update={
+            "completed_sections": [section], 
+            "retrieval_logs": retrieval_logs,
+            "source_str": source_str  # CRITICAL: Include source_str for RAGAS evaluation
+        },
         goto=END
     )
 
@@ -1180,28 +1188,47 @@ builder.add_edge("compile_final_report", END)
 prd_analysis_graph = builder.compile()
 
 # Async wrapper for streaming
-async def analyze_prd_with_streaming(prd_content: str, prd_title: str = "PRD", db: Session = None, current_user = None):
-    """Analyze PRD with streaming support using LangChain retrievers (naive or contextual compression) and Tavily web search."""
+async def analyze_prd_with_streaming(
+    prd_content: str, 
+    prd_title: str = "PRD", 
+    db: Session = None, 
+    current_user = None,
+    override_retriever_type: Optional[RetrieverType] = None
+):
+    """Analyze PRD with streaming support using LangChain retrievers (naive or contextual compression) and Tavily web search.
     
-    # Get user's retriever type from their notion settings, fallback to global default
-    user_retriever_type = settings.retriever_type  # Default fallback
+    Args:
+        prd_content: The PRD content to analyze
+        prd_title: Title for the PRD
+        db: Database session
+        current_user: Current user for settings
+        override_retriever_type: Override user's retriever setting (used for evaluation)
+    """
     
-    if current_user and db:
-        try:
-            from app.crud.notion import get_user_notion_settings
-            user_settings = get_user_notion_settings(db, current_user.id)
-            if user_settings and user_settings.retriever_type:
-                # Convert string to enum
-                user_retriever_type = RetrieverType(user_settings.retriever_type)
-                print(f"🔧 Using user's retriever type: {user_retriever_type.value}")
-        except Exception as e:
-            print(f"⚠️ Failed to get user's retriever type, using default: {e}")
+    # Determine retriever type: override > user setting > global default
+    if override_retriever_type:
+        user_retriever_type = override_retriever_type
+        print(f"🎯 Using override retriever type for evaluation: {user_retriever_type.value}")
+    else:
+        # Get user's retriever type from their notion settings, fallback to global default
+        user_retriever_type = settings.retriever_type  # Default fallback
+        
+        if current_user and db:
+            try:
+                from app.crud.notion import get_user_notion_settings
+                user_settings = get_user_notion_settings(db, current_user.id)
+                if user_settings and user_settings.retriever_type:
+                    # Convert string to enum
+                    user_retriever_type = RetrieverType(user_settings.retriever_type)
+                    print(f"🔧 Using user's retriever type: {user_retriever_type.value}")
+            except Exception as e:
+                print(f"⚠️ Failed to get user's retriever type, using default: {e}")
     
     config = {
         "configurable": {
             "top_k": 5, 
             "db": db,
-            "retriever_type": user_retriever_type  # Use user's specific setting
+            "retriever_type": user_retriever_type  # Now correctly uses override when provided
         }
     }
     

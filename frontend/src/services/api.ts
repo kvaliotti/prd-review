@@ -216,3 +216,21 @@ export const prdAnalysisAPI = {
     return response.data;
   }
 }; 
+
+// RAGAS Evaluation API functions
+export const ragasAPI = {
+  startEvaluation: (data: { user_id?: number; testset_size: number }) =>
+    api.post('/ragas-evaluation/start', data),
+    
+  getStatus: () =>
+    api.get('/ragas-evaluation/status'),
+    
+  getResults: () =>
+    api.get('/ragas-evaluation/results'),
+    
+  resetEvaluation: () =>
+    api.delete('/ragas-evaluation/reset'),
+    
+  testService: () =>
+    api.get('/ragas-evaluation/test')
+}; 

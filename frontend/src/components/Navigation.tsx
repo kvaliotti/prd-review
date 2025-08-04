@@ -40,6 +40,13 @@ const Navigation: React.FC = () => {
           PRD Review
         </Link>
         <Link 
+          to="/ragas-evaluation" 
+          className={`nav-link ${isActive('/ragas-evaluation') ? 'active' : ''}`}
+        >
+          <span className="nav-icon">🎯</span>
+          RAGAS Evaluation
+        </Link>
+        <Link 
           to="/settings" 
           className={`nav-link ${isActive('/settings') ? 'active' : ''}`}
         >

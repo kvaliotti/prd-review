@@ -37,3 +37,10 @@ redis
 structlog
 prometheus-client
 gunicorn 
+
+# RAGAS evaluation dependencies
+ragas>=0.1.0
+langsmith>=0.1.0
+datasets>=2.0.0
+Pillow # For RAGAS internal dependency
+rapidfuzz # Required by RAGAS for string distance calculations 

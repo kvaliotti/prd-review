@@ -122,7 +122,7 @@ npm install
 ```bash
 cd backend
 source venv/bin/activate  # Activate virtual environment
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --loop asyncio
 ```
 
 The backend will be available at: `http://localhost:8000`
