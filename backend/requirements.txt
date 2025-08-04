@@ -1,0 +1,34 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+pydantic[email]
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+python-dotenv
+openai
+httpx
+
+# LangChain and LangGraph dependencies
+langchain
+langchain-openai
+langchain-core
+langchain-community
+langchain-postgres
+langgraph
+
+# Notion and Vector dependencies
+notion-client
+pgvector
+numpy
+tiktoken
+
+# Production dependencies
+slowapi
+redis
+structlog
+prometheus-client
+gunicorn 

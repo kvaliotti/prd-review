@@ -1,0 +1,57 @@
+graph TB
+    subgraph "Frontend Layer"
+        UI[React Chat Interface]
+        Auth[Authentication Components]
+        Chat[Chat Components]
+        Sidebar[Chat History Sidebar]
+    end
+    
+    subgraph "API Gateway"
+        FastAPI[FastAPI Backend]
+        AuthAPI[Auth Endpoints]
+        ChatAPI[Chat Endpoints]
+        UserAPI[User Endpoints]
+    end
+    
+    subgraph "Business Logic"
+        LangGraph[LangGraph Agent]
+        ChatService[Chat Service]
+        AuthService[Authentication Service]
+        UserService[User Service]
+    end
+    
+    subgraph "External Services"
+        OpenAI[OpenAI GPT-4.1]
+    end
+    
+    subgraph "Data Layer"
+        PostgreSQL[(PostgreSQL Database)]
+        UserTable[Users Table]
+        ChatTable[Chats Table]
+        MessageTable[Messages Table]
+    end
+    
+    UI --> FastAPI
+    Auth --> AuthAPI
+    Chat --> ChatAPI
+    Sidebar --> ChatAPI
+    
+    FastAPI --> AuthService
+    FastAPI --> ChatService
+    FastAPI --> UserService
+    
+    ChatService --> LangGraph
+    LangGraph --> OpenAI
+    
+    AuthService --> PostgreSQL
+    ChatService --> PostgreSQL
+    UserService --> PostgreSQL
+    
+    PostgreSQL --> UserTable
+    PostgreSQL --> ChatTable
+    PostgreSQL --> MessageTable
+    
+    style UI fill:#e1f5fe
+    style FastAPI fill:#f3e5f5
+    style LangGraph fill:#fff3e0
+    style PostgreSQL fill:#e8f5e8 
